@@ -30,7 +30,8 @@ The following Raspberry Pi HAT's are currently supported:
 1. WM8960 Audio HAT
 2. PI REPEATER board by ICS Controllers
 3. uSvxCard by F5SWB & F8ASB including Seeed VoiceCard
-4. More to come?
+4. ELENATa boards from SkyAndy aka DK1LO
+5. More to come?
 
 ## Installation
 
@@ -57,7 +58,7 @@ $ chmod +x svxlink_setup.sh
 $ sudo ./svxlink_setup.sh
 ```
 
-Or, if you realy like to see a debug mode (development only):
+Or, if you realy like to write a debug log (development only):
 ```
 $ sudo ./svxlink_setup.sh -D
 ```
@@ -105,7 +106,8 @@ Die folgenden Raspberry-Pi-Aufsätze werden derzeit unterstützt:1. WM8960 Audio
 1. WM8960 Audio HAT
 2. PI REPEATER Karte von ICS Controllers, USA
 3. uSvxCard von F5SWB und F8ASB einschließlich Seeed VoiceCard
-4. Mehr in Zukunft?
+4. ELENATa-Boards von DK1LO alias SkyAndy
+5. Mehr in Zukunft?
 
 ## Installation
 
@@ -132,7 +134,7 @@ $ chmod +x svxlink_setup.sh
 $ sudo ./svxlink_setup.sh
 ```
 
-Oder, falls Du den Debug-Modus starten möchtest (benötigen eigentlich nur Entwickler):
+Oder, falls Du ein Debug-Log schreiben möchtest (benötigen eigentlich nur Entwickler):
 ```
 $ sudo ./svxlink_setup.sh -D
 ```
@@ -145,9 +147,7 @@ $ sudo ./svxlink_setup.sh -D
 
 Dieses Skript kann nur ein Hilfswerkzeug sein, um die Basis für SvxLink möglichst schnell auf Deinem Computer einzurichten. Es ersetzt jedoch keinesfalls die Notwendigkeit, Dich intensiv mit dem Konzept sowie der Einrichtung von SvxLink auseinanderzusetzen. Insbesondere dann, wenn Du SvxLink als Relais-Steuerung einsetzen möchtest, solltest Du genau wissen, was Du tust und wie alles funktioniert und miteinander zusammenhängt. Die Anleitungen von Tobias Blomberg, SM0SVX, erklären alle Bestandteile und Einstellungen im Detail. Hilfe gibt es auch im zugehörigen [Forum](https://groups.io/g/svxlink).
 
-Bitte beachte auch, dass SvxLink ständig weiterentwickelt wird. Du solltest daher unbedingt auch die Informationen im [Changelog](https://github.com/sm0svx/svxlink/blob/master/src/svxlink/ChangeLog) beachten.
-
-Ehrlicherweise müssen wir allerdings darauf hinweisen, dass zur Beschäftigung mit SvxLink Kenntnisse der englischen Sprache unerlässlich sind, da nur wenige aktuelle Informationen in deutscher Sprache vorliegen und die Entwicklung in einer weltweiten Gemeinschaft stattfindet.
+Bitte beachte auch, dass SvxLink ständig weiterentwickelt wird. Du solltest daher unbedingt auch die Informationen im [Changelog](https://github.com/sm0svx/svxlink/blob/master/src/svxlink/ChangeLog) beachten. Ehrlicherweise müssen wir allerdings darauf hinweisen, dass zur Beschäftigung mit SvxLink Kenntnisse der englischen Sprache unerlässlich sind, da nur wenige aktuelle Informationen in deutscher Sprache vorliegen und die Entwicklung in einer weltweiten Gemeinschaft stattfindet.
 
 ## Weiterentwicklung und Verbesserungen
 

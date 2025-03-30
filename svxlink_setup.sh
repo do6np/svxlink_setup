@@ -2,11 +2,12 @@
 #
 # +---------------------------------------------------------------+
 # | SVXLINK Setup Script for Debian /  Raspberry Pi OS "Bookworm" |
-# |              (C) 2022-2024 DF5KX & DO6NP - BETA               |
+# |              (C) 2022-2025 DF5KX & DO6NP - BETA               |
 # +---------------------------------------------------------------+
 #
 # Changelog
 # ---------
+# 2025 03 30 | DO6NP | Added support for ELENATA boards
 # 2024 01 13 | DO6NP | Added Raspi checks
 # 2024 01 09 | DO6NP | Added LADSPA stuff for new SvxLink feature
 # 2023 11 26 | DO6NP | Some bugfixes, sudo's, some new ideas
@@ -28,14 +29,16 @@
 CONF=/etc/svxlink/svxlink.conf
 FLAG="$HOME/.svxlink_installed"
 VERSIONS=$HOME/svxlink/src/versions
+BOOTCONFIG=/boot/config.txt
 IS_PI=false
 IS_DEBUG=false
 declare -A msgtext
-declare -r SCRIPT_VERSION="2.10" # Version number in the format: n.nn
+declare -r SCRIPT_VERSION="25.03.1" # Version number in the format: yy.mm.n
 declare -r LANG=$(locale | grep LANG | cut -d= -f2 | cut -d_ -f1)
 declare -r REQUIRED_OS_VER="12"
 declare -r REQUIRED_OS_NAME="Bookworm"
 declare -r MIN_PARTITION_SIZE=8000
+declare -r LOGFILE=$(basename $0 ..sh).log
 
 ################################################################################
 
@@ -45,7 +48,6 @@ function set_messages {
 		msgtext["debug_partition_size"]="Größe Hauptpartition"
 		msgtext["debug_partition_needed"]="Benötigte Mindestgröße"
 		msgtext["debug_pi"]="Raspi erkannt"
-		msgtext["debug_key"]="Bitte Enter zum Forsetzen drücken."
 		msgtext["preparing"]="Bereite System vor"
 		msgtext["no_root"]="Skript darf nicht als Benutzer 'root' ausgeführt werden."
 		msgtext["no_connection"]="Internetverbindung fehlt!"
@@ -77,6 +79,8 @@ function set_messages {
 		msgtext["setup_usvx_installing_drivers"]="Installiere Treiber für die Seeed Voicecard Soundkarte"
 		msgtext["setup_usvx_gpio_preparing"]="Bereite Konfiguration der GPIO-Ports vor"
 		msgtext["setup_usvx_gpio_install"]="Installiere GPIO-Portkonfiguration für die uSvxCard"
+		msgtext["setup_elenata_deactivating_onboard"]="Deaktiviere Onboard-HDMI-Soundkarte"
+		msgtext["setup_elenata_activating_audio"]="Aktiviere Audio"
 		msgtext["install_svxlink_loading_sources"]="Lade SvxLink-Sourcecode herunter"
 		msgtext["setup_update_packages"]="Lade System-Updates"
 		msgtext["install_svxlink_loading_updates"]="Lade SvxLink-Update aus Repo"
@@ -98,7 +102,6 @@ function set_messages {
 		msgtext["debug_partition_size"]="Size main volume"
 		msgtext["debug_partition_needed"]="Size needed"
 		msgtext["debug_pi"]="Raspberry Pi detected"
-		msgtext["debug_key"]="Press Enter to continue."
 		msgtext["preparing"]="Preparing system"
 		msgtext["no_root"]="Script must not be executed as 'root'."
 		msgtext["no_connection"]="Missing internet connection!"
@@ -130,6 +133,8 @@ function set_messages {
 		msgtext["setup_usvx_installing_drivers"]="Installing driver for Seeed Voicecard"
 		msgtext["setup_usvx_gpio_preparing"]="Preparing GPIO port configuration"
 		msgtext["setup_usvx_gpio_install"]="Installing GPIO port configuration for uSvxCard"
+		msgtext["setup_elenata_deactivating_onboard"]="Deactivating onboard HDMI soundchip"
+		msgtext["setup_elenata_activating_audio"]="Activating audio"
 		msgtext["install_svxlink_loading_sources"]="Loading sources from Git repo"
 		msgtext["setup_update_packages"]="Loading system updates"
 		msgtext["install_svxlink_loading_updates"]="Loading SvxLink updates from Git"
@@ -149,10 +154,10 @@ function set_messages {
 	fi
 }
 
-function debug_info {
+function echo() {
+	builtin echo "`date +%T`: $@"
 	if $IS_DEBUG; then
-		read -t 60 -n 1 -s -r -p "${msgtext["debug_key"]}"
-		echo
+		builtin echo "`date +%T`: $@" >> $LOGFILE
 	fi
 }
 
@@ -162,7 +167,7 @@ function debug_info {
 
 function check_root {
 	if [[ $EUID = 0 ]]; then
-		echo "`date +%T`: *** ${msgtext["no_root"]}"
+		echo "*** ${msgtext["no_root"]}"
 		exit 1
 	fi	
 }
@@ -174,7 +179,7 @@ function check_os {
 		DEBIAN_VERSION="UNSUPPORTED"
 	fi
 	if [ "$DEBIAN_VERSION" != "$REQUIRED_OS_VER" ]; then
-		echo "`date +%T`: *** ${msgtext["unsupported_os"]} $REQUIRED_OS_VER (\"$REQUIRED_OS_NAME\")."
+		echo "*** ${msgtext["unsupported_os"]} $REQUIRED_OS_VER (\"$REQUIRED_OS_NAME\")."
 		exit 1
 	fi
 	if [ -e "/etc/os-release" ]; then
@@ -183,52 +188,52 @@ function check_os {
 			IS_PI=true
 		fi
 	else
-		echo "`date +%T`: *** ${msgtext["unsupported_os"]} $REQUIRED_OS_VER (\"$REQUIRED_OS_NAME\")."
+		echo "*** ${msgtext["unsupported_os"]} $REQUIRED_OS_VER (\"$REQUIRED_OS_NAME\")."
 		exit 1
 	fi
 	if (uname -a | grep -q rpi); then
 		IS_PI=true
 	fi
+	if [ -e "/boot/firmware/config.txt" ]; then
+		BOOTCONFIG=/boot/firmware/config.txt
+	fi
 	if $IS_DEBUG; then
-		echo "`date +%T`: *** ${msgtext["debug_info"]}"		
-		echo "`date +%T`: ${msgtext["debug_pi"]}: $IS_PI"
-		cat /etc/os-release
-		debug_info
+		echo "*** ${msgtext["debug_info"]}"
+		echo "${msgtext["debug_pi"]}: $IS_PI"
+		cat /etc/os-release >> $LOGFILE
 	fi
 }
 
 function update_and_prepare {
-	echo "`date +%T`: *** ${msgtext["preparing"]}"
+	echo "*** ${msgtext["preparing"]}"
 	sudo apt-get -qq update
 	if [ $? -ne 0 ]; then
-		echo "`date +%T`: *** ${msgtext["no_connection"]}"
+		echo "*** ${msgtext["no_connection"]}"
 		exit 1
 	fi
 	sudo apt-get -qq -y upgrade
 	if [ $? -ne 0 ]; then
-		echo "`date +%T`: *** ${msgtext["no_connection"]}"
+		echo "*** ${msgtext["no_connection"]}"
 		exit 1
 	fi
 	sudo apt-get -qq -y dist-upgrade
 	if [ $? -ne 0 ]; then
-		echo "`date +%T`: *** ${msgtext["no_connection"]}"
+		echo "*** ${msgtext["no_connection"]}"
 		exit 1
 	fi
-	debug_info
 }
 
 function check_filesystem {
 	PARTITION_SIZE=0
 	PARTITION_SIZE=$(df -m | awk '$6=="/"{print$2}')
 	if [ $PARTITION_SIZE -le $MIN_PARTITION_SIZE ]; then
-		echo "`date +%T`: *** ${msgtext["partition_too_small"]}"
+		echo "*** ${msgtext["partition_too_small"]}"
 		exit -1
 	fi
 	if $IS_DEBUG; then
-		echo "`date +%T`: *** ${msgtext["debug_info"]}"		
-		echo "`date +%T`: ${msgtext["debug_partition_size"]}: $PARTITION_SIZE"
-		echo "`date +%T`: ${msgtext["debug_partition_needed"]}: $MIN_PARTITION_SIZE"
-		debug_info
+		echo "*** ${msgtext["debug_info"]}"		
+		echo "${msgtext["debug_partition_size"]}: $PARTITION_SIZE"
+		echo "${msgtext["debug_partition_needed"]}: $MIN_PARTITION_SIZE"
 	fi
 }
 
@@ -237,18 +242,18 @@ function check_filesystem {
 # *** Install for the first time
 
 function install_firstrun {
-	echo "`date +%T`: *** ${msgtext["first_run"]} ***"
+	echo "*** ${msgtext["first_run"]} ***"
 
 	if $IS_PI; then
-		echo "`date +%T`: *** ${msgtext["deactivating_swap"]}"
+		echo "${msgtext["deactivating_swap"]}"
 		sudo swapoff -a
 		sudo service dphys-swapfile stop
 		sudo systemctl disable dphys-swapfile
 		sudo apt-get -qq -y purge dphys-swapfile
 		sudo systemctl disable apt-daily.service apt-daily.timer apt-daily-upgrade.service apt-daily-upgrade.timer
-		echo "`date +%T`: *** ${msgtext["activating_ramdisk"]}"
-		echo "tmpfs   /var/log                tmpfs   nodev,noatime,nosuid,mode=0777,size=128m        0       0"	| sudo tee -a /etc/fstab > /dev/null
-		echo "tmpfs   /tmp                    tmpfs   nodev,noatime,nosuid,mode=0777,size=128m        0       0"	| sudo tee -a /etc/fstab > /dev/null
+		echo "${msgtext["activating_ramdisk"]}"
+		builtin echo "tmpfs   /var/log                tmpfs   nodev,noatime,nosuid,mode=0777,size=128m        0       0"	| sudo tee -a /etc/fstab > /dev/null
+		builtin echo "tmpfs   /tmp                    tmpfs   nodev,noatime,nosuid,mode=0777,size=128m        0       0"	| sudo tee -a /etc/fstab > /dev/null
 		## --- Remark in case of trubles:
 		## Create /etc/tmpfiles.d/Software.conf with following content:
 		## d /var/log/Software 0777 User Group - -
@@ -256,26 +261,26 @@ function install_firstrun {
 		sudo systemctl daemon-reload
 	fi
 	
-	echo "`date +%T`: *** ${msgtext["activating_logrotate"]}"
-	echo "/var/log/svxlink {"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
-	echo "  daily"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
-	echo "  rotate 14"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
-	echo "  missingok"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
-	echo "  notifempty"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
-	echo "  compress"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
-	echo "  dateext"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
-	echo "}"	| sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	echo "${msgtext["activating_logrotate"]}"
+	builtin echo "/var/log/svxlink {" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	builtin echo "  daily" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	builtin echo "  rotate 14" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	builtin echo "  missingok" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	builtin echo "  notifempty" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	builtin echo "  compress" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	builtin echo "  dateext" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
+	builtin echo "}" | sudo tee -a /etc/logrotate.d/svxlink > /dev/null
 	sudo systemctl restart logrotate
 
 	if $IS_PI; then
-		echo "`date +%T`: *** ${msgtext["optimizing_system"]}"
+		echo "*** ${msgtext["optimizing_system"]}"
 		sudo systemctl stop ModemManager.service
 		sudo systemctl disable ModemManager.service
 		sudo apt-get -qq -y purge modemmanager
-		sudo sed -i "s/dtoverlay=vc4-kms-v3d/dtoverlay=vc4-kms-v3d,audio=off/" /boot/config.txt
-		sudo sed -i "s/camera_auto_detect=1/#camera_auto_detect=1/" /boot/config.txt
-		echo "# *** Inserted by SVXLINK Setup Script"	| sudo tee -a /boot/config.txt > /dev/null
-		echo "dtoverlay=disable-bt"	                  | sudo tee -a /boot/config.txt > /dev/null
+		sudo sed -i "s/dtoverlay=vc4-kms-v3d/dtoverlay=vc4-kms-v3d,audio=off/" $BOOTCONFIG
+		sudo sed -i "s/camera_auto_detect=1/#camera_auto_detect=1/" $BOOTCONFIG
+		builtin echo "# *** Inserted by SVXLINK Setup Script"	| sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "dtoverlay=disable-bt"                  | sudo tee -a $BOOTCONFIG > /dev/null
 		sudo systemctl stop hciuart
 		sudo systemctl disable hciuart
 	fi
@@ -283,20 +288,21 @@ function install_firstrun {
 	
 	read -p "${msgtext["enter_callsign"]}: " CALL
 	if [ "$CALL" == "" ]; then
-		echo "${msgtext["reenter_callsign"]}"
+		builtin echo "${msgtext["reenter_callsign"]}"
 		exit 1
 	fi
 	if $IS_PI; then
-		echo "${msgtext["choose_interface_1"]}"
-		echo "1) WM8960 Audio HAT"
-		echo "2) PI-REPEATER board (ICS Controllers)"
-		echo "3) uSvxCard (F5SWB & F8ASB)"
-		echo "0) None"
+		builtin echo "${msgtext["choose_interface_1"]}"
+		builtin echo "1) WM8960 Audio HAT"
+		builtin echo "2) PI-REPEATER board (ICS Controllers)"
+		builtin echo "3) uSvxCard (F5SWB & F8ASB)"
+		builtin echo "4) ELENATA (from / ab TL5v1)"
+		builtin echo "0) None"
 		while :; do
 			read -p "${msgtext["choose_interface_2"]} " AUDIO
 			[[ $AUDIO =~ ^[0-3]+$ ]] || { echo "${msgtext["choose_interface_invalid"]}"; continue; }
 			if ((audio >= 0 && audio <= 3)); then
-				echo "Ok."
+				builtin echo "Ok."
 				break
 			else
 				echo "${msgtext["choose_interface_invalid"]}"
@@ -307,19 +313,19 @@ function install_firstrun {
 			case $YN in
 				[JjYyZz]* ) RTLSDR=true; break;;
 				[Nn]* ) RTLSDR=false; break;;
-				* ) echo ${msgtext["wrong_answer"]};;
+				* ) builtin echo ${msgtext["wrong_answer"]};;
 			esac
 		done
 	fi
 	
 	# Setting up the system basics
-	echo "`date +%T`: ${msgtext["setup_creating_groups"]} ..."
+	echo "${msgtext["setup_creating_groups"]} ..."
 	sudo groupadd -r svxlink
 	sudo useradd -r -g svxlink -G audio,nogroup,plugdev,dialout -d /etc/svxlink -c "SvxLink daemon" svxlink
 	if $IS_PI; then
 		sudo usermod -aG gpio svxlink
 	fi
-	echo "`date +%T`: ${msgtext["setup_install_packages"]} ..."
+	echo "${msgtext["setup_install_packages"]} ..."
 	sudo apt-get -y --fix-missing install git wget tar vim nano logrotate \
               g++ make libsigc++-2.0-dev \
               libgsm1-dev libpopt-dev tcl-dev \
@@ -331,123 +337,127 @@ function install_firstrun {
               libssl-dev libcurl4-openssl-dev groff doxygen graphviz \
               ladspa-sdk swh-plugins tap-plugins
 	if [ $? -ne 0 ]; then
-		echo "`date +%T`: *** ${msgtext["setup_packages_error"]}"
+		echo "*** ${msgtext["setup_packages_error"]}"
 		exit -1
 	fi
 	if $IS_PI; then
 		sudo apt-get -y --fix-missing install gpiod libgpiod-dev
 		if [ $? -ne 0 ]; then
-			echo "`date +%T`: *** ${msgtext["setup_packages_error"]}"
+			echo "*** ${msgtext["setup_packages_error"]}"
 			exit -1
 		fi
 	fi
-	debug_info
 	if $RTLSDR; then
-		echo "`date +%T`: ${msgtext["setup_rtlsdr"]} ..."
+		echo "${msgtext["setup_rtlsdr"]} ..."
 		sudo apt-get -y --fix-missing install librtlsdr-dev rtl-sdr python3-serial
 		if [ $? -ne 0 ]; then
-			echo "`date +%T`: *** ${msgtext["setup_packages_error"]}"
+			echo "*** ${msgtext["setup_packages_error"]}"
 			exit -1
 		fi
-		debug_info
 	fi
 
 	# Install drivers and stuff for audio HAT's if neeeded
 	if [ $AUDIO == 1 ]; then
-		echo "`date +%T`: ${msgtext["setup_wm8960"]} ..."
+		echo "${msgtext["setup_wm8960"]} ..."
 		git clone https://github.com/waveshare/WM8960-Audio-HAT --quiet
 		if [ $? -ne 0 ]; then
-			echo "`date +%T`: *** ${msgtext["setup_git_error"]}"
+			echo "*** ${msgtext["setup_git_error"]}"
 			exit -1
 		fi
 		cd WM8960-Audio-HAT
 		sudo ./install.sh
-		debug_info
 	elif [ $AUDIO == 2 ]; then
-		echo "`date +%T`: ${msgtext["setup_ics_deactivating_onboard"]} ..."
-		sudo sed -i "s/dtparam=audio=on/#dtparam=audio=on/" /boot/config.txt 
-		echo "`date +%T`: ${msgtext["setup_ics_activating_audio"]} ..."
+		echo "${msgtext["setup_ics_deactivating_onboard"]} ..."
+		sudo sed -i "s/dtparam=audio=on/dtparam=audio=off/" $BOOTCONFIG 
+		echo "${msgtext["setup_ics_activating_audio"]} ..."
 		sudo sed -i "s/snd-bcm2835/#snd-bcm2835/" /etc/modules
-		echo "`date +%T`: ${msgtext["setup_ics_installing_i2c"]} ..."
+		echo "${msgtext["setup_ics_installing_i2c"]} ..."
 		sudo apt-get -y --fix-missing install i2c-tools
 		if [ $? -ne 0 ]; then
-			echo "`date +%T`: *** ${msgtext["setup_packages_error"]}"
+			echo "*** ${msgtext["setup_packages_error"]}"
 			exit -1
 		fi
-		sudo sed -i "s/#dtparam=i2c_arm=on/dtparam=i2c_arm=on/" /boot/config.txt
+		sudo sed -i "s/#dtparam=i2c_arm=on/dtparam=i2c_arm=on/" $BOOTCONFIG
 		echo "i2c-dev" | sudo tee -a /etc/modules > /dev/null
-		echo "`date +%T`: ${msgtext["setup_ics_activating_ics"]} ..."
-		echo "# *** Inserted by SvxLink setup script" | sudo tee -a /boot/config.txt > /dev/null
-		echo "#Enable FE-Pi Overlay" | sudo tee -a /boot/config.txt > /dev/null
-		echo "dtoverlay=fe-pi-audio" | sudo tee -a /boot/config.txt > /dev/null
-		echo "dtoverlay=i2s-mmap" | sudo tee -a /boot/config.txt > /dev/null
-		echo "#Enable mcp23s17 Overlay" | sudo tee -a /boot/config.txt > /dev/null
-		echo "dtoverlay=mcp23017,addr=0x20,gpiopin=12" | sudo tee -a /boot/config.txt > /dev/null
-		echo "#Enable mcp3008 adc overlay" | sudo tee -a /boot/config.txt > /dev/null
-		echo "dtoverlay=mcp3008:spi0-0-present,spi0-0-speed=3600000" | sudo tee -a /boot/config.txt > /dev/null
-		echo "# Enable UART for serial console" | sudo tee -a /boot/config.txt > /dev/null
-		echo "enable_uart=1" | sudo tee -a /boot/config.txt > /dev/null
-		debug_info
+		echo "${msgtext["setup_ics_activating_ics"]} ..."
+		builtin echo "# *** Inserted by SvxLink setup script" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "#Enable FE-Pi Overlay" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "dtoverlay=fe-pi-audio" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "dtoverlay=i2s-mmap" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "#Enable mcp23s17 Overlay" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "dtoverlay=mcp23017,addr=0x20,gpiopin=12" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "#Enable mcp3008 adc overlay" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "dtoverlay=mcp3008:spi0-0-present,spi0-0-speed=3600000" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "# Enable UART for serial console" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "enable_uart=1" | sudo tee -a $BOOTCONFIG > /dev/null
 	elif [ $AUDIO == 3 ]; then
-		echo "`date +%T`: ${msgtext["setup_usvx_blacklisting"]} ..."
-		echo "blacklist snd_bcm2835" | sudo tee -a /etc/modprobe.d/raspi-blacklist.conf > /dev/null
+		echo "${msgtext["setup_usvx_blacklisting"]} ..."
+		builtin echo "blacklist snd_bcm2835" | sudo tee -a /etc/modprobe.d/raspi-blacklist.conf > /dev/null
 		if [ -e "/lib/modprobe.d/snd-card.conf" ]; then
 			sudo sed -i "s/options snd_usb_audio index=0/#options snd_usb_audio index=0/" /lib/modprobe.d/snd-card.conf 
 			sudo sed -i "s/options snd slots=snd_usb_audio,snd-bcm2835/#options snd slots=snd_usb_audio,snd-bcm2835/" /lib/modprobe.d/snd-card.conf 
 		fi
-		echo "`date +%T`: ${msgtext["setup_usvx_installing_drivers"]} ..."
+		echo "${msgtext["setup_usvx_installing_drivers"]} ..."
 		git clone https://github.com/respeaker/seeed-voicecard.git --quiet
 		if [ $? -ne 0 ]; then
-			echo "`date +%T`: *** ${msgtext["setup_git_error"]}"
+			echo "*** ${msgtext["setup_git_error"]}"
 			exit -1
 		fi
 		cd seeed-voicecard
 		sudo ./install.sh
-		echo "`date +%T`: ${msgtext["setup_usvx_gpio_preparing"]} ..."
-		echo "###############################################################################" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "#                                                                             #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Configuration file for the SvxLink server GPIO Pins                         #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Created using SvxLink setup script by DO6NP and DF5KX for uSvxCard          #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "#                                                                             #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "###############################################################################" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "#                                                                             #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# *** GPIO 17: PTT                                                            #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# *** GPIO 23: SQUELCH                                                        #"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# *** GPIO 24: PUSH BUTTON                                                    #"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "#                                                                             #"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "###############################################################################" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# GPIO system pin path" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_PATH=/sys/class/gpio" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Space separated list of GPIO pins that point IN and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Active HIGH state (3.3v = ON, 0v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_IN_HIGH=\"gpio23 gpio24\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Space separated list of GPIO pins that point IN and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Active LOW state (0v = ON, 3.3v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_IN_LOW=\"\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Space separated list of GPIO pins that point OUT and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Active HIGH state (3.3v = ON, 0v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_OUT_HIGH=\"gpio17\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Space separated list of GPIO pins that point OUT and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Active LOW state (0v = ON, 3.3v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_OUT_LOW=\"\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# User that should own the GPIO device files"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_USER=\"svxlink\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# Group for the GPIO device files"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_GROUP=\"svxlink\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "# File access mode for the GPIO device files" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		echo "GPIO_MODE=\"0664\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
-		debug_info
+		echo "${msgtext["setup_usvx_gpio_preparing"]} ..."
+		builtin echo "###############################################################################" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "#                                                                             #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Configuration file for the SvxLink server GPIO Pins                         #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Created using SvxLink setup script by DO6NP and DF5KX for uSvxCard          #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "#                                                                             #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "###############################################################################" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "#                                                                             #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# *** GPIO 17: PTT                                                            #" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# *** GPIO 23: SQUELCH                                                        #"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# *** GPIO 24: PUSH BUTTON                                                    #"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "#                                                                             #"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "###############################################################################" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# GPIO system pin path" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_PATH=/sys/class/gpio" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Space separated list of GPIO pins that point IN and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Active HIGH state (3.3v = ON, 0v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_IN_HIGH=\"gpio23 gpio24\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Space separated list of GPIO pins that point IN and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Active LOW state (0v = ON, 3.3v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_IN_LOW=\"\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Space separated list of GPIO pins that point OUT and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Active HIGH state (3.3v = ON, 0v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_OUT_HIGH=\"gpio17\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Space separated list of GPIO pins that point OUT and have an" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Active LOW state (0v = ON, 3.3v = OFF)" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_OUT_LOW=\"\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# User that should own the GPIO device files"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_USER=\"svxlink\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# Group for the GPIO device files"  | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_GROUP=\"svxlink\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "# File access mode for the GPIO device files" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+		builtin echo "GPIO_MODE=\"0664\"" | sudo tee -a /usr/src/seeed-voicecard/svxlink_gpio.conf > /dev/null
+	elif [ $AUDIO == 4 ]; then
+	echo "${msgtext["setup_elenata_deactivating_onboard"]} ..."
+		sudo sed -i "s/dtparam=audio=on/dtparam=audio=off/" $BOOTCONFIG 
+		echo "${msgtext["setup_elenata_activating_audio"]} ..."
+		builtin echo "# *** Inserted by SvxLink setup script V$SCRIPT_VERSION" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "[all]" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "#Enable FE-Pi Overlay" | sudo tee -a $BOOTCONFIG > /dev/null
+		builtin echo "dtoverlay=fe-pi-audio" | sudo tee -a $BOOTCONFIG > /dev/null
+		sudo sed -i "s/dtoverlay=vc4-kms-v3d/dtoverlay=vc4-kms-v3d.noaudio/" $BOOTCONFIG 
+	# xxx
 	fi
 	
 	# Installing SvxLink for the first time
-	echo "`date +%T`: ${msgtext["install_svxlink_loading_sources"]} ... "
+	echo "${msgtext["install_svxlink_loading_sources"]} ... "
 	git clone https://github.com/sm0svx/svxlink.git --quiet
 	if [ $? -ne 0 ]; then
-		echo "`date +%T`: *** ${msgtext["setup_git_error"]}"
+		echo "*** ${msgtext["setup_git_error"]}"
 		exit -1
 	fi
 	mkdir $HOME/svxlink/src/build
-	debug_info
 }
 
 ################################################################################
@@ -455,20 +465,19 @@ function install_firstrun {
 # *** Install updates ***
 
 function install_update {
-	echo "`date +%T`: ${msgtext["setup_update_packages"]} ..."
-	echo "`date +%T`: ${msgtext["install_svxlink_loading_updates"]} ..."
+	echo "${msgtext["setup_update_packages"]} ..."
+	echo "${msgtext["install_svxlink_loading_updates"]} ..."
 	cd $HOME/svxlink
 	VERSION=`grep "SVXLINK=" $VERSIONS | awk -F= '{print $2}'`
-	echo "`date +%T`: ${msgtext["install_svxlink_current_version"]}: $VERSION"
+	echo "${msgtext["install_svxlink_current_version"]}: $VERSION"
 	git config pull.rebase true
 	git pull --quiet
 	if [ "$?" != 0 ]; then
-		echo "`date +%T`: ${msgtext["setup_git_error"]}"
+		echo "${msgtext["setup_git_error"]}"
 		exit 1
 	fi
 	NEWVERSION=`grep "SVXLINK=" $VERSIONS | awk -F= '{print $2}'`
-	echo "`date +%T`: ${msgtext["install_svxlink_new_version"]}: $NEWVERSION"
-	debug_info
+	echo "${msgtext["install_svxlink_new_version"]}: $NEWVERSION"
 }
 
 ################################################################################
@@ -476,21 +485,20 @@ function install_update {
 # *** Compile and install SvxLink (new + update) ***
 
 function install_svxlink {
-	echo "`date +%T`: ${msgtext["install_svxlink_compiling"]} ..."
+	echo "${msgtext["install_svxlink_compiling"]} ..."
 	cd $HOME/svxlink/src/build
 	cmake -DUSE_QT=OFF -DCMAKE_INSTALL_PREFIX=/usr -DSYSCONF_INSTALL_DIR=/etc -DLOCAL_STATE_DIR=/var -DWITH_SYSTEMD=ON ..
 	#cmake -DUSE_QT=OFF -DCMAKE_INSTALL_PREFIX=/usr -DSYSCONF_INSTALL_DIR=/etc -DLOCAL_STATE_DIR=/var -DWITH_SYSTEMD=ON -DWITH_CONTRIB_SIP_LOGIC=ON ..
 	if [ $? != 0 ];then
-		echo "`date +%T`: ${msgtext["install_svxlink_cmake_error"]}"
+		echo "${msgtext["install_svxlink_cmake_error"]}"
 		exit 1
 	fi
-	echo "`date +%T`: ${msgtext["install_svxlink_compiling"]} ..."
+	echo "${msgtext["install_svxlink_compiling"]} ..."
 	make
 	make doc
-	echo "`date +%T`: ${msgtext["install_svxlink_installing"]} ..."
+	echo "${msgtext["install_svxlink_installing"]} ..."
 	sudo make install
 	sudo ldconfig
-	debug_info
 }
 
 ################################################################################
@@ -498,27 +506,27 @@ function install_svxlink {
 # *** Install all sound files (EN + DE) ***
 
 function install_sounds {
-	echo "`date +%T`: ${msgtext["install_svxlink_sounds_en_installing"]} ..."
+	echo "${msgtext["install_svxlink_sounds_en_installing"]} ..."
 	cd /usr/share/svxlink/sounds
 	sudo git clone https://github.com/sm0svx/svxlink-sounds-en_US-heather.git --quiet
 	if [ $? -ne 0 ]; then
-		echo "`date +%T`: *** ${msgtext["install_svxlink_sounds_en_installerror"]}"
+		echo "*** ${msgtext["install_svxlink_sounds_en_installerror"]}"
 	else
 		sudo $HOME/svxlink/src/svxlink/scripts/filter_sounds.sh svxlink-sounds-en_US-heather en_US-heather-16k
 		sudo ln -s en_US-heather-16k en_US
 	fi
 	if [[ $LANG == "de" ]]; then
 		# Install German language pack 'Petra' by DL1HRC
-		echo "`date +%T`: ${msgtext["install_svxlink_sounds_de_installing"]} ..."
+		echo "${msgtext["install_svxlink_sounds_de_installing"]} ..."
 		sudo git clone https://github.com/dl1hrc/svxlink-sounds-de_DE-petra.git --quiet
 		if [ $? -ne 0 ]; then
-			echo "`date +%T`: *** ${msgtext["install_svxlink_sounds_de_installerror"]}"
+			echo "*** ${msgtext["install_svxlink_sounds_de_installerror"]}"
 		else
 			sudo ln -s svxlink-sounds-de_DE-petra de_DE
 		fi
 		sudo wget -q https://server42.net/svxlink/de_DE-anna-16k.tar.bz2
 		if [ $? -ne 0 ]; then
-			echo "`date +%T`: *** ${msgtext["install_svxlink_sounds_de_installerror"]}"
+			echo "*** ${msgtext["install_svxlink_sounds_de_installerror"]}"
 		else
 			sudo tar xjf de_DE-anna-16k.tar.bz2
 			#sudo ln -s de_DE-anna-16k de_DE
@@ -533,9 +541,9 @@ function install_sounds {
 # *** Setup SvxLink (change some settings) ***
 
 function setup_svxlink {
-	echo "`date +%T`: *** ${msgtext["setup_svxlink_backup"]}"
+	echo "*** ${msgtext["setup_svxlink_backup"]}"
 	sudo cp -p $CONF $CONF.bak
-	echo "`date +%T`: *** ${msgtext["setup_svxlink_customizing"]}"
+	echo "*** ${msgtext["setup_svxlink_customizing"]}"
 	#sudo sed -i 's/DEEMPHASIS=0/DEEMPHASIS=1/' $CONF
 	sudo sed -i "s/MYCALL/$CALL/g" $CONF
 	sudo sed -i "s/DEFAULT_LANG/de_DE/g" $CONF
@@ -543,11 +551,11 @@ function setup_svxlink {
 	sudo sed -i 's/PEAK_METER=1/PEAK_METER=0/' $CONF
 	sudo sed -i -e "s/^DTMF_CTRL_PTY*=.*/DTMF_CTRL_PTY=\/tmp\/dtmf_ctrl" $CONF
 	if [ -e "/usr/src/seeed-voicecard/svxlink_gpio.conf" ]; then
-		echo "`date +%T`: ${msgtext["setup_usvx_gpio_install"]} ..."
+		echo "${msgtext["setup_usvx_gpio_install"]} ..."
 		sudo cp -p /usr/src/seeed-voicecard/svxlink_gpio.conf /etc/svxlink/gpio.conf
 	fi
 
-	echo "`date +%T`: *** ${msgtext["setup_svxlink_activating"]}"
+	echo "*** ${msgtext["setup_svxlink_activating"]}"
 	#sudo systemctl enable svxlink_gpio_setup
 	sudo systemctl enable svxlink
 }
@@ -559,7 +567,7 @@ function setup_svxlink {
 echo
 echo "+---------------------------------------------------------------+"
 echo "| SVXLINK Setup Script for Debian / Raspberry Pi OS  \"Bookworm\" |"
-echo "|          V$SCRIPT_VERSION - (C) 2022-2024 DF5KX & DO6NP - BETA           |"
+echo "|         V$SCRIPT_VERSION - (C) 2022-2025 DF5KX & DO6NP - BETA         |"
 echo "+---------------------------------------------------------------+"
 echo
 
@@ -595,7 +603,7 @@ else
 	install_svxlink
 fi
 
-echo "`date +%T`: *** ${msgtext["main_done"]}"
+echo "*** ${msgtext["main_done"]}"
 echo
 
 # *** EOF ***
